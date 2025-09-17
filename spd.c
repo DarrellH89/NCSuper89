@@ -17,16 +17,26 @@
 **  arguments are given the current speed setting (in RAM) is
 **  simply reported.
 **
+**  9/17/25: added code to display the current CPU speed on
+**  the NCSuper89's OLED display. Code can be built with or
+**  without this feature. Code will work fine even if executed
+**  on a machine without the OLED.
+**
 **  Compiled with Software Toolworks C/80 V. 3.1
 **
 **  NOTE: Add -qHDOS=1 when compiling for HDOS. Also, HDOS files
 **  must be saved in UNIX [nl-terminated] form but CP/M
 **  in MSDOS [cr-lf terminated) form.
 **
-**  Buildsequence:
+**  Build sequence (non OLED version):
 **    cc spd
 **    m80 = spd
 **    l80 spd,pio,printf,clibrary,spd/n/m/e
+**
+**    OLED version:
+**    cc -qOLED=1 spd
+**    m80 = spd
+**    l80 spd,i2clib,oledlib,pio,printf,stdlib/s,clibrary,spd/n/m/e
 **
 **	uses outp() from PIO.ASM
 **
@@ -35,6 +45,9 @@
 ** 
 **  /gfr/ - Updated for NC Super89, CP/M 3 and other fixes
 **  September 2025
+**
+**  Modified to update OLED display with current speed
+**  /gfr/ - 15 September 2025
 */
 #include "printf.h"
 
@@ -53,6 +66,18 @@
 
 /* control byte location */
 char *ctl2fl;
+
+#ifdef OLED
+#include "oledlib.h"
+
+#define NROWS 8
+#define NCOLS 128
+static char buf[NROWS][NCOLS];
+static char heading[] = "CPU Speed (Mhz)";
+
+#include "segments.c"
+#include "font5x7.c"
+#endif
 
 #ifndef HDOS
 /* offset from CP/M 3 BIOS warm boot for ctlflg */
@@ -85,6 +110,48 @@ int bdoshl(c,de)
 }
 #endif
 
+#ifdef OLED
+/* doseg
+**
+** display a 7-segment digit defined by the
+** array s starting at location c
+*/
+doseg(s, c)
+char s[][32];
+char c[][NCOLS];
+{
+  int i, j;
+
+  for (i=0; i<6; i++)
+    for (j=0; j<32; j++)
+      c[i][j] = s[i][j];
+}
+
+
+/*
+** addtxt - add text at specified location
+**
+** caution: no error checking
+**
+*/
+int addtxt(dsp, txt)
+char *dsp;
+char *txt;
+{
+  char *c, *f;
+  int i;
+
+  for (c=txt; *c; c++) {
+    /* point to character's font definition */
+		f = font5x7 + ((*c - ' ') * 5);
+		for (i=0; i<5; i++)
+      *dsp++ = *f++;
+
+    /* add space between characters */
+    *dsp++ = 0;
+	}
+}
+#endif
 
 main(argc,argv)
 int	argc;
@@ -92,6 +159,9 @@ char *argv[];
 {
 	int spd;
 	char newspd, spdmask;
+#ifdef OLED
+	int i, j, offset;
+#endif
 
 #ifdef  HDOS
   ctl2fl = 0x2036;
@@ -145,6 +215,41 @@ char *argv[];
 #endasm
       /* Now output the new speed setting to the control port */
       outp(CTLPRT, *ctl2fl);
+
+#ifdef OLED
+      /* clear the buffer */
+      for (i=0; i<NROWS; i++)
+        for (j=0; j<NCOLS; j++)
+          buf[i][j] = 0;
+
+      offset = (NCOLS-strlen(heading)*5)/2;
+	    addtxt(&buf[0][offset], heading);
+
+      switch (spdmask) {
+        case MASK2:
+          doseg(seg2, &buf[2][64]);
+          break;
+        case MASK4:
+          doseg(seg4, &buf[2][64]);
+          break;
+        case MASK8:
+          doseg(seg8, &buf[2][64]);
+          break;
+        case MASKMAX:
+          /* note: assumes max=16 */
+          doseg(seg1, &buf[2][32]);
+          doseg(seg6, &buf[2][64]);
+          break;
+      }
+      
+      /* oledinit() and oledbuf() return error codes
+      ** but here we ignore them. this lets users who
+      ** don't have the OLED interface still use this program
+      */
+    	oledinit();
+    	oledbuf(buf, sizeof(buf), OLED_DAT);
+#endif
+
     }
   }
 	
